@@ -48,18 +48,6 @@ $$Y_{\text{batch}} = X \cdot W_{\text{gcn1}}^T + b_{\text{gcn1}}$$
 * **Block Layout:** 2D Thread Allocation matching the precise matrix dimensions of the layer's output spatial footprint ($\text{Threads} = [\text{OUT\_FEATURES}, \text{NUM\_NODES}] = [64, 8]$).
 * **Memory Alignment:** Coalesced global memory indexing maps raw static weights (`W_gcn1`) and biases (`b_gcn1`) cleanly into register spaces, optimizing memory bus utilization across the PCIe boundary.
 
----
-
-## 📂 Repository Structure
-
-```text
-├── eigen/                    # Eigen Header templates library 
-├── src/
-│   └── model_weights.h       # Frozen, static model weights and biases
-├── aetherq_gpu_benchmark.cu  # Integrated CUDA Parallel Profiling Engine
-└── README.md                 # System Documentation
-
-```
 
 ---
 
