@@ -1,65 +1,154 @@
 # AETHERQ-GPU: High-Performance Batched GNN Inference Engine
 
-A hardware-accelerated, massively parallel optimization of the **AETHERQ** Graph Convolutional Network (GCN) layer. This engine transitions the legacy framework from sequential CPU AVX2 SIMD loops to a custom-architected CUDA grid topology, unlocking extreme throughput for micro-batch telemetry processing.
+A CUDA-accelerated implementation of the AETHERQ Graph Convolutional Network (GCN) projection layer, designed to explore high-throughput graph inference on NVIDIA GPUs.
+
+This project transitions a CPU-based AVX2 implementation to a massively parallel CUDA execution model, enabling thousands of independent GNN layer evaluations to be processed concurrently.
 
 ---
 
-## 🚀 The Architectural Leap
+## Overview
 
-The legacy AETHERQ implementation achieved optimization via manual AVX2 vector intrinsics on the CPU. However, processing iterations sequentially introduced scaling bottlenecks when handling high-frequency sensor streams.
+The original AETHERQ implementation used manually vectorized AVX2 instructions on the CPU to accelerate matrix operations. While efficient for individual executions, the workload remained fundamentally sequential when processing large numbers of iterations.
 
-**AETHERQ-GPU** resolves the memory and execution walls by implementing a **Parallel Batching Layout**. Instead of dispatching thousands of sequential kernels or loops, the engine packs the entire benchmark workload into a single concurrent execution wave.
+AETHERQ-GPU investigates an alternative execution strategy: mapping independent GNN projection workloads across the GPU execution grid and executing them simultaneously.
 
-* **Legacy Engine:** Sequential CPU loops + manual vectorization (`_mm256_fmadd_ps`).
-* **Upgraded Engine:** Massively parallel CUDA execution grid where each hardware block completely absorbs and executes an entire distinct GNN layer projection instance simultaneously.
+### CPU Version
 
----
+* Sequential execution loop
+* AVX2/FMA vectorization (`_mm256_fmadd_ps`)
+* Optimized for low-latency single-instance execution
 
-## 📊 Performance Profile
+### GPU Version
 
-### Execution Environment
-
-* **GPU:** NVIDIA GeForce RTX 4060 Laptop GPU (Ada Lovelace Architecture, SM 8.9)
-* **Compute Capabilities:** Dedicated L1/Shared Memory SRAM per Streaming Multiprocessor, 32 MB L2 Cache
-* **Workload Configuration:** 5,000 concurrent iterations, Input Shape $[8 \times 6]$ (8 Nodes, 6 Features), Weight Projection Shape $[64 \times 6]$, Output Shape $[8 \times 64]$
-
-### Microbenchmark Metrics (5,000 Total Iterations)
-
-| Architecture Layer | Total Workload Runtime | Effective Per-Layer Throughput | Engineering Trade-off |
-| :--- | :--- | :--- | :--- |
-| **Legacy AVX2 CPU** (Sequential Loop) | 20.500 ms | 4.10 $\mu$s | **Latency-Optimized:** Ultra-fast single execution, scales poorly over large batches. |
-| **AETHERQ-GPU** (Parallel Batched) | **0.211 ms** | **0.042 $\mu$s** (42 ns) | **Throughput-Optimized:** Minor kernel launch overhead, scales exceptionally across massive batches. |
-
-**Key Insight:** While the host CPU maintains an incredible single-instance latency baseline of 4.10 $\mu$s due to immediate L1 cache proximity, it falls behind under heavy iteration scaling. By parallelizing all 5,000 iterations into a concurrent CUDA grid, AETHERQ-GPU achieves a **97.1x throughput speedup** over the sequential CPU loop.
+* CUDA-based parallel execution
+* One CUDA block assigned to each independent workload instance
+* Optimized for throughput across large batches
 
 ---
 
-## 🛠️ Core Infrastructure Architecture
+## Benchmark Configuration
 
-### Mathematical Operations
+### Hardware
 
-The kernel computes a fused forward projection and bias addition for an arbitrary number of batch components concurrently:
+* GPU: NVIDIA GeForce RTX 4060 Laptop GPU
+* Architecture: Ada Lovelace
+* Compute Capability: 8.9 (SM 89)
+* L2 Cache: 32 MB
 
-$$Y_{\text{batch}} = X \cdot W_{\text{gcn1}}^T + b_{\text{gcn1}}$$
+### Workload
 
-### Memory & Thread Topology
+* Total Iterations: 5,000
+* Input Shape: 8 × 6
+* Weight Shape: 64 × 6
+* Output Shape: 8 × 64
 
-* **Grid Layout:** 1D Grid of $N$ Blocks (where $N = \text{Total Iterations}$).
-* **Block Layout:** 2D Thread Allocation matching the precise matrix dimensions of the layer's output spatial footprint ($\text{Threads} = [\text{OUT\_FEATURES}, \text{NUM\_NODES}] = [64, 8]$).
-* **Memory Alignment:** Coalesced global memory indexing maps raw static weights (`W_gcn1`) and biases (`b_gcn1`) cleanly into register spaces, optimizing memory bus utilization across the PCIe boundary.
-
+Each iteration performs an independent GCN projection using identical layer dimensions.
 
 ---
 
-## ⚡ Compilation & Deployment
+## Performance Results
 
-The engine compiles under the NVIDIA CUDA Compiler (`nvcc`) utilizing standard host optimization flags and strict target architecture matching for Ada Lovelace runtime optimization (`sm_89`).
+| Implementation        | Total Runtime | Effective Time per Iteration | Notes                                  |
+| --------------------- | ------------- | ---------------------------- | -------------------------------------- |
+| AVX2 CPU (Sequential) | 20.500 ms     | 4.10 µs                      | Strong single-instance latency         |
+| CUDA GPU (Batched)    | 0.211 ms      | 0.042 µs (42 ns)             | High throughput via parallel execution |
+
+### Observed Speedup
+
+For this benchmark configuration:
+
+```text
+Speedup = 20.500 ms / 0.211 ms ≈ 97.1×
+```
+
+The result illustrates the benefit of executing thousands of independent projection workloads concurrently on the GPU rather than processing them sequentially on the CPU.
+
+---
+
+## Computation
+
+The kernel performs a fused linear projection and bias addition:
+
+```text
+Y = X · Wᵀ + b
+```
+
+Where:
+
+* X = input node-feature matrix
+* W = learnable projection weights
+* b = bias vector
+* Y = projected output matrix
+
+---
+
+## CUDA Execution Layout
+
+### Grid Configuration
+
+```text
+Grid:
+    N blocks
+    N = number of benchmark iterations
+```
+
+Each CUDA block processes one independent projection workload.
+
+### Block Configuration
+
+```text
+Threads per block:
+    [OUT_FEATURES, NUM_NODES]
+    [64, 8]
+```
+
+This maps the thread topology directly to the output matrix dimensions.
+
+### Memory Strategy
+
+* Coalesced global memory access patterns
+* Shared static weight and bias tensors across workloads
+* Register-based accumulation for projection computation
+* GPU-wide parallel execution of independent inference instances
+
+---
+
+## Technical Skills Demonstrated
+
+* CUDA kernel development
+* Thread-block and grid design
+* GPU memory hierarchy awareness
+* Performance benchmarking
+* Throughput vs latency analysis
+* AVX2 SIMD optimization
+* CPU/GPU architectural comparison
+
+---
+
+## Build Instructions
+
+Compile using NVIDIA CUDA Compiler (`nvcc`):
 
 ```powershell
-# Compile the production engine pipeline
 nvcc -O3 -arch=sm_89 -I./eigen aetherq_gpu_benchmark.cu -o aetherq_gpu_benchmark.exe
-
-# Execute the high-precision profiling benchmark
-.\aetherq_gpu_benchmark.exe
-
 ```
+
+Run the benchmark:
+
+```powershell
+.\aetherq_gpu_benchmark.exe
+```
+
+---
+
+## Project Purpose
+
+This project explores practical GPU acceleration techniques for graph neural network workloads and serves as a study of:
+
+* CUDA programming
+* GPU execution topology
+* Throughput-oriented inference systems
+* CPU vs GPU performance characteristics
+* Parallel execution strategies for graph workloads
+
+The implementation focuses on understanding how workload mapping, thread organization, and memory access patterns influence inference performance on modern NVIDIA GPUs.
